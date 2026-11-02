@@ -1,9 +1,10 @@
-# compiled objects and the binary (the leading / means "only in the repo root")
+# compiled objects and the binary
+# (the leading / anchors the pattern to the repo root, so it can't match files elsewhere)
 *.o
 /sysmon
 
-# makepkg output
+# makepkg working folders and output
 /src/
 /pkg/
-*.pkg.tar.zst
 *.tar.gz
+*.pkg.tar.zst

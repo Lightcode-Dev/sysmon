@@ -9,7 +9,7 @@ license=('GPL-3.0-or-later')
 depends=('glibc')
 makedepends=('gcc' 'make')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')   # run `updpkgsums` once the v$pkgver tag is pushed
+sha256sums=('e5c9d0daa3d2aef23a7b8a3f748330802c27839970ff26f95154248ea0afe52c')
 
 build() {
   cd "$pkgname-$pkgver"
