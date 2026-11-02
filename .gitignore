@@ -1,0 +1,9 @@
+# compiled objects and the binary (the leading / means "only in the repo root")
+*.o
+/sysmon
+
+# makepkg output
+/src/
+/pkg/
+*.pkg.tar.zst
+*.tar.gz

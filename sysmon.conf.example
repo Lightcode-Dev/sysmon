@@ -1,0 +1,21 @@
+# sysmon configuration
+#
+# Copy this file to ~/.config/sysmon/config  (or $XDG_CONFIG_HOME/sysmon/config).
+# Lines starting with # are comments. Every option is optional.
+
+# Color theme: default, nord, gruvbox, dracula or mono (no colors).
+# Press T inside sysmon to try the themes without restarting.
+theme = default
+
+# Mouse support: click rows, click column headers to sort, scroll with the wheel.
+# While it is on, hold Shift to select text with the mouse in most terminals.
+mouse = on
+
+# Start in tree view (on) or flat list (off).
+tree = off
+
+# Starting sort column: cpu, mem, pid, user, name or io.
+sort = cpu
+
+# Sort direction: desc (biggest first) or asc.
+sort_order = desc
