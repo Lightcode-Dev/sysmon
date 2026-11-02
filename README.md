@@ -116,5 +116,7 @@ Limits: 64 CPUs, 8 network interfaces, 8 mounted filesystems, 8 disks, 4096 proc
   or so when the machine is busy.
 - Per-core temperatures need the `coretemp` driver; without it the column is hidden.
 - If `/proc` is mounted with `hidepid`, only your own processes are visible.
-- There is no license file yet. Add one before publishing, and set the `license` line in
-  the `PKGBUILD` to match.
+
+## License
+
+sysmon is free software, released under the GNU General Public License, version 3 or (at your option) any later version. See the `LICENSE` file.

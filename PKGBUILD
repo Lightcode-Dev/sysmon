@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc='Live terminal system monitor with an interactive process table'
 arch=('x86_64')
 url='https://github.com/Lightcode-Dev/sysmon'
-license=('MIT')   # TODO: change to the license you choose, and add a LICENSE file to the repo
+license=('GPL-3.0-or-later')
 depends=('glibc')
 makedepends=('gcc' 'make')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
@@ -20,6 +20,4 @@ build() {
 package() {
   cd "$pkgname-$pkgver"
   make DESTDIR="$pkgdir" PREFIX=/usr install
-  # a LICENSE file does not exist yet; once it does, uncomment:
-  # install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
