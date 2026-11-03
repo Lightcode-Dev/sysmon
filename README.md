@@ -9,6 +9,14 @@ interactive process table: sorting, filtering, a collapsible tree view, per-proc
 disk I/O, a details popup, signalling, mouse support and color themes. Bars fade from
 green to red with load, and the layout adapts to the terminal size.
 
+## Install
+
+Arch Linux, from the AUR (the package is called sysmon-tui, the command is sysmon):
+
+    yay -S sysmon-tui
+
+Or build from source as described below.
+
 ## Build and run
 
 You need `gcc` and `make` (on Arch: `sudo pacman -S base-devel`).
