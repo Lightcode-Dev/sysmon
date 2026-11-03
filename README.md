@@ -69,6 +69,9 @@ Mouse: click a row to select it, click the selected row again for details, click
 column header to sort by it, scroll the wheel to move. A click anywhere closes the
 popup. While mouse support is on, most terminals need Shift held to select text.
 
+Ctrl+Z suspends sysmon and hands the terminal back in its normal state; `fg` brings it back. Resizing the
+window redraws immediately.
+
 Until you pick something, the highlight simply sits on the first row and the list moves under
 it. Once you move it (`j`/`k`, arrows or a click) it follows that process by PID and stays on the
 same screen row while the list re-sorts around it. `g` or Home returns to the top. Changing the
@@ -85,6 +88,8 @@ Copy `sysmon.conf.example` (installed in `/usr/share/doc/sysmon/`) to
     tree = off            # start in tree view
     sort = cpu            # cpu, mem, pid, user, name, io
     sort_order = desc     # desc or asc
+    hide_interfaces = veth*, docker0   # network interfaces to hide (a trailing * matches any ending)
+    hide_down = off                    # on: also hide interfaces whose link is down
 
 Problems in the file (an unknown option, a bad value) are reported in the footer on
 start-up, and the rest of the file is still used. The `mono` theme uses no colors at all:
@@ -106,6 +111,14 @@ the selected row is shown in reverse video.
 - **Network and disk rates**: byte counters from `/proc/net/dev` and `/proc/diskstats`,
   differenced between samples and divided by the real elapsed time. Loopback, loop and ram devices are skipped.
 - **Memory "used"**: total minus `MemAvailable`, like `free` and btop.
+- **Swap**: `SwapTotal` minus `SwapFree` from `/proc/meminfo`. zram shows up here when it is used as swap.
+- **Load averages**: the first three numbers of `/proc/loadavg`, shown in the header when it is wide enough.
+- **CPU clock**: `scaling_cur_freq` in each CPU's `cpufreq` directory, shown next to each core when the panel
+  is wide enough.
+- **NVMe temperature**: every NVMe controller has a hwmon sensor whose `device` link names the controller, so
+  the temperature of `nvme0` is shown on the `nvme0n1` row of the Disks panel. SATA drives are not covered yet.
+- **Link dot** in front of each network interface, from `/sys/class/net/<name>/operstate`: green = up,
+  red = down, hollow = unknown (loopback and some virtual devices report that).
 
 ## Source layout
 
@@ -124,6 +137,7 @@ Limits: 64 CPUs, 8 network interfaces, 8 mounted filesystems, 8 disks, 4096 proc
 
 - Linux only.
 - Per-core temperatures need the `coretemp` driver; without it the column is hidden.
+- Drive temperatures are shown for NVMe drives only.
 - If `/proc` is mounted with `hidepid`, only your own processes are visible.
 
 ## License

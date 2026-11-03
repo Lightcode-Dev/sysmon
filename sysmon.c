@@ -18,6 +18,7 @@
 #define _POSIX_C_SOURCE 200809L   /* must come before any #include: enables statvfs/snprintf/access under -ansi */
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/statvfs.h>
@@ -166,6 +167,9 @@ static void read_disk_space(struct SystemStatus *status) {
     fclose(f);
 }
 
+/* defined further down, next to the other sensor code */
+static int nvme_temp_for(const char *disk);
+
 /* Read/write speed of each physical disk, from /proc/diskstats.
    Line: "<major> <minor> <name> <reads> <merged> <sectors read> <ms> <writes>
           <merged> <sectors written> ..." Sectors are always 512 bytes. */
@@ -227,6 +231,10 @@ static void read_disk_io(struct SystemStatus *status) {
         }
     }
     status->num_diskio = j;
+
+    for (i = 0; i < status->num_diskio; i++) {
+        status->diskio[i].temp = nvme_temp_for(status->diskio[i].name);
+    }
 }
 
 /* Per-core temperatures from the Intel "coretemp" driver. It lists one sensor per
@@ -301,6 +309,161 @@ static void read_core_temps(struct SystemStatus *status) {
     }
 }
 
+/* ---------- Network interface filter and link state ---------- */
+
+static struct {
+    char pat[8][24];
+    int n;
+    int hide_down;
+} g_nf;
+
+void net_filter_set(const char *patterns, int hide_down) {
+    char buf[128], *tok;
+
+    g_nf.n = 0;
+    g_nf.hide_down = hide_down;
+    copy_str(buf, sizeof(buf), patterns);
+    /* split on commas and spaces */
+    for (tok = strtok(buf, ", "); tok != NULL && g_nf.n < 8; tok = strtok(NULL, ", ")) {
+        if (strlen(tok) < sizeof(g_nf.pat[0])) {
+            strcpy(g_nf.pat[g_nf.n++], tok);
+        }
+    }
+}
+
+/* Do the first n characters of s equal those of p, ignoring case? */
+static int nocase_prefix(const char *s, const char *p, size_t n) {
+    size_t k;
+    for (k = 0; k < n; k++) {
+        if (tolower((unsigned char)s[k]) != tolower((unsigned char)p[k])) return 0;
+        if (s[k] == '\0') return 0;
+    }
+    return 1;
+}
+
+static int net_hidden(const char *name) {
+    int i;
+    size_t len;
+
+    for (i = 0; i < g_nf.n; i++) {
+        len = strlen(g_nf.pat[i]);
+        if (len == 0) continue;
+        if (g_nf.pat[i][len - 1] == '*') {
+            if (nocase_prefix(name, g_nf.pat[i], len - 1)) return 1;      /* "veth*": starts with veth */
+        } else if (nocase_prefix(name, g_nf.pat[i], len) && name[len] == '\0') {
+            return 1;                                                      /* exact name */
+        }
+    }
+    return 0;
+}
+
+/* /sys/class/net/<name>/operstate says up, down, unknown, dormant, ... */
+static int read_link_state(const char *name) {
+    char path[80], buf[24];
+    FILE *f;
+    int r = -1;
+
+    sprintf(path, "/sys/class/net/%s/operstate", name);
+    f = fopen(path, "r");
+    if (f == NULL) return -1;
+    if (fgets(buf, sizeof(buf), f) != NULL) {
+        if (strncmp(buf, "up", 2) == 0) r = 1;
+        else if (strncmp(buf, "down", 4) == 0 || strncmp(buf, "lowerlayerdown", 14) == 0
+                 || strncmp(buf, "notpresent", 10) == 0) r = 0;
+    }
+    fclose(f);
+    return r;
+}
+
+/* ---------- NVMe temperature ---------- */
+
+/* Each NVMe controller (nvme0, nvme1, ...) has a hwmon sensor named "nvme". Its "device" link
+   points at the controller, so the link's last component says which drive the sensor belongs
+   to. The disk "nvme0n1" belongs to controller "nvme0". The list is built once. */
+#define MAX_NVME 4
+static char nvme_ctrl[MAX_NVME][16];
+static char nvme_temp_path[MAX_NVME][96];
+static int nvme_n = 0;
+static int nvme_searched = 0;
+
+static void find_nvme_sensors(void) {
+    char path[128], name[16], target[128];
+    char *base;
+    FILE *f;
+    ssize_t len;
+    int i;
+
+    nvme_searched = 1;
+    for (i = 0; i < 32 && nvme_n < MAX_NVME; i++) {
+        sprintf(path, HWMON_DIR "/hwmon%d/name", i);
+        f = fopen(path, "r");
+        if (f == NULL) continue;
+        if (fgets(name, sizeof(name), f) == NULL || strncmp(name, "nvme", 4) != 0) {
+            fclose(f);
+            continue;
+        }
+        fclose(f);
+        sprintf(path, HWMON_DIR "/hwmon%d/device", i);
+        len = readlink(path, target, sizeof(target) - 1);
+        if (len <= 0) continue;
+        target[len] = '\0';
+        base = strrchr(target, '/');
+        base = (base != NULL) ? base + 1 : target;
+        if (strlen(base) >= sizeof(nvme_ctrl[0])) continue;
+        strcpy(nvme_ctrl[nvme_n], base);
+        sprintf(nvme_temp_path[nvme_n], HWMON_DIR "/hwmon%d/temp1_input", i);
+        nvme_n++;
+    }
+}
+
+/* Temperature in C of the drive called disk (e.g. "nvme0n1"), or -1 */
+static int nvme_temp_for(const char *disk) {
+    size_t cl;
+    int i, milli;
+    FILE *f;
+
+    if (!nvme_searched) find_nvme_sensors();
+    for (i = 0; i < nvme_n; i++) {
+        cl = strlen(nvme_ctrl[i]);
+        /* "nvme0" must be followed by 'n', or "nvme1" would also match "nvme10n1" */
+        if (strncmp(disk, nvme_ctrl[i], cl) == 0 && disk[cl] == 'n') {
+            f = fopen(nvme_temp_path[i], "r");
+            if (f == NULL) return -1;
+            if (fscanf(f, "%d", &milli) != 1) {
+                fclose(f);
+                return -1;
+            }
+            fclose(f);
+            return milli / 1000;
+        }
+    }
+    return -1;
+}
+
+/* ---------- CPU clock speed ---------- */
+
+/* scaling_cur_freq holds the current clock in kHz and can be read by everyone */
+static void read_core_freqs(struct SystemStatus *status) {
+    char path[160];
+    FILE *f;
+    int i, khz, cpu;
+
+    status->core_freq_valid = 0;
+    for (i = 0; i < status->num_cores; i++) {
+        status->core_mhz[i] = 0;
+        cpu = status->core_cpu[i];
+        if (cpu < 0) continue;
+        sprintf(path, CPU_SYS_DIR "/cpu%d/cpufreq/scaling_cur_freq", cpu);
+        f = fopen(path, "r");
+        if (f == NULL) continue;
+        if (fscanf(f, "%d", &khz) == 1 && khz > 0) {
+            status->core_mhz[i] = khz / 1000;
+            status->core_freq_valid = 1;
+        }
+        fclose(f);
+    }
+}
+
 /* Seconds since the last call. Counters are divided by this, so rates stay right
    even if a frame took longer than planned or sampling was paused. */
 static void measure_interval(struct SystemStatus *status) {
@@ -325,6 +488,7 @@ void get_system_status(struct SystemStatus *status) {
     FILE *temp_file, *uptime_file, *mem_file, *load_file, *stat_file, *net_file;
     const char *temp_path;
     int millidegrees, mem_total_kb = 0, mem_free_kb = 0, mem_avail_kb = 0;
+    int swap_total_kb = 0, swap_free_kb = 0, linkstate;
     float raw_uptime;
     char buffer[256];
 
@@ -410,10 +574,18 @@ void get_system_status(struct SystemStatus *status) {
             if (strncmp(buffer, "MemAvailable:", 13) == 0) {
                 sscanf(buffer, "MemAvailable: %d kB", &mem_avail_kb);
             }
+            if (strncmp(buffer, "SwapTotal:", 10) == 0) {
+                sscanf(buffer, "SwapTotal: %d kB", &swap_total_kb);
+            }
+            if (strncmp(buffer, "SwapFree:", 9) == 0) {
+                sscanf(buffer, "SwapFree: %d kB", &swap_free_kb);
+            }
         }
         status->ram_total_gb = mem_total_kb / (1024.0 * 1024.0);
         status->ram_free_gb = mem_free_kb / (1024.0 * 1024.0);
         status->ram_avail_gb = mem_avail_kb / (1024.0 * 1024.0);
+        status->swap_total_gb = swap_total_kb / (1024.0 * 1024.0);
+        status->swap_used_gb = (swap_total_kb - swap_free_kb) / (1024.0 * 1024.0);
         fclose(mem_file);
     }
 
@@ -421,7 +593,8 @@ void get_system_status(struct SystemStatus *status) {
     load_file = fopen("/proc/loadavg", "r");
     if (load_file != NULL) {
         /* %*f and %*d/ skip fields without storing them; the return is 1 if the one stored field parsed */
-        if (fscanf(load_file, "%*f %*f %*f %*d/%d", &status->total_processes) != 1) {
+        if (fscanf(load_file, "%f %f %f %*d/%d", &status->load[0], &status->load[1], &status->load[2],
+                   &status->total_processes) != 4) {
             status->total_processes = 0;
         }
         fclose(load_file);
@@ -448,6 +621,9 @@ void get_system_status(struct SystemStatus *status) {
                 memcpy(name, p, len);
                 name[len] = '\0';
                 if (strcmp(name, "lo") == 0) continue;   /* skip loopback */
+                if (net_hidden(name)) continue;          /* hidden by the user's config */
+                linkstate = read_link_state(name);
+                if (g_nf.hide_down && linkstate == 0) continue;
 
                 /* Parse after the colon (it can touch the first number).
                    %*s skips one field: take rx bytes, skip 7, take tx bytes. */
@@ -474,6 +650,7 @@ void get_system_status(struct SystemStatus *status) {
                 }
                 status->ifaces[i].prev_rx = rx;
                 status->ifaces[i].prev_tx = tx;
+                status->ifaces[i].link = linkstate;
                 status->ifaces[i].seen = 1;
             }
         }
@@ -492,6 +669,7 @@ void get_system_status(struct SystemStatus *status) {
 
     /* 6b. Per-core temperatures (needs the core list from step 1) */
     read_core_temps(status);
+    read_core_freqs(status);
 
     /* 7. Disks */
     read_disk_space(status);

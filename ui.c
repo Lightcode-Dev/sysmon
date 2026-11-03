@@ -273,10 +273,11 @@ static void format_size_short(char *out, float gb) {
     }
 }
 
-/* One row: name, then two labelled rates (used by network and disk I/O) */
-static void rate_row(int row, int col, int iw, const char *name,
-                     const char *sym1, const char *col1, float rate1,
-                     const char *sym2, const char *col2, float rate2) {
+/* One row: name, then two labelled rates (used by network and disk I/O).
+   Returns how many columns the row used, so the caller can add something after it. */
+static int rate_row(int row, int col, int iw, const char *name,
+                    const char *sym1, const char *col1, float rate1,
+                    const char *sym2, const char *col2, float rate2) {
     char r1[16], r2[16];
     int namew;
 
@@ -287,13 +288,14 @@ static void rate_row(int row, int col, int iw, const char *name,
     if (namew > 16) namew = 16;   /* keep the rates near the name on wide panels */
     put(row, col, C_LABEL "%-*.*s " "%s%s " C_VALUE "%10s " "%s%s " C_VALUE "%10s" C_RESET,
         namew, namew, name, col1, sym1, r1, col2, sym2, r2);
+    return namew + 26;
 }
 
 /* ---------- Panels. Each returns its height in rows. ---------- */
 
 static int panel_cpu(const struct SystemStatus *st, int row, int col, int w) {
-    int iw, h, i, n, per_row, cw, bw, ob, r, c, show_t, t;
-    char temp[16];
+    int iw, h, i, n, per_row, cw, bw, ob, r, c, show_t, show_f, off, t;
+    char temp[16], fb[16];
     const char *tcol;
 
     iw = w - 4;                          /* inside the border, minus 1 space padding each side */
@@ -301,7 +303,8 @@ static int panel_cpu(const struct SystemStatus *st, int row, int col, int w) {
     per_row = (iw >= 36) ? 2 : 1;        /* two cores per row when there is room */
     cw = (per_row == 2) ? (iw - 2) / 2 : iw;
     show_t = st->core_temps_valid && cw >= 26;   /* per-core temperature column, if there is room */
-    bw = cw - 9 - (show_t ? 5 : 0);      /* "C11 " + bar + " 100%" + " 45C" */
+    show_f = st->core_freq_valid && cw >= 36;    /* clock speed column, if there is room */
+    bw = cw - 9 - (show_t ? 5 : 0) - (show_f ? 5 : 0);   /* "C11 " + bar + " 100%" + " 45C" + " 4.3G" */
     if (bw < 3) bw = 3;
     h = 2 + 1 + (n + per_row - 1) / per_row;
 
@@ -330,11 +333,18 @@ static int panel_cpu(const struct SystemStatus *st, int row, int col, int w) {
         bar(r, c + 4, bw, st->core_usage_pct[i]);
         put(r, c + 4 + bw + 1, "%s%3.0f%%" C_RESET,
             pct_col(st->core_usage_pct[i]), st->core_usage_pct[i]);
+        off = c + 4 + bw + 1 + 4;            /* just after the percentage */
         if (show_t) {
             t = st->core_temp[i];
             if (t >= 0) {
-                put(r, c + 4 + bw + 1 + 4, "%s%4dC" C_RESET, temp_col(t), t);
+                put(r, off, "%s%4dC" C_RESET, temp_col(t), t);
             }
+            off += 5;
+        }
+        if (show_f && st->core_mhz[i] > 0) {
+            if (st->core_mhz[i] >= 1000) sprintf(fb, "%.1fG", st->core_mhz[i] / 1000.0);
+            else sprintf(fb, "%dM", st->core_mhz[i]);
+            put(r, off, C_LABEL " %4s" C_RESET, fb);
         }
     }
     return h;
@@ -342,7 +352,7 @@ static int panel_cpu(const struct SystemStatus *st, int row, int col, int w) {
 
 static int panel_mem(const struct SystemStatus *st, int row, int col, int w) {
     int iw, bw;
-    float used_pct;
+    float used_pct, swap_pct;
 
     iw = w - 4;
     bw = iw - 5 - 1 - 6;                 /* "Used " + bar + " 100.0%" */
@@ -354,14 +364,24 @@ static int panel_mem(const struct SystemStatus *st, int row, int col, int w) {
         used_pct = 0.0f;
     }
 
-    box(row, col, w, 5, "Memory", NULL, NULL);
+    box(row, col, w, 6, "Memory", NULL, NULL);
     put(row + 1, col + 2, C_LABEL "Used " C_RESET);
     bar(row + 1, col + 7, bw, used_pct);
     put(row + 1, col + 7 + bw + 1, "%s%5.1f%%" C_RESET, pct_col(used_pct), used_pct);
     put(row + 2, col + 2, C_LABEL "Total " C_VALUE "%.2f GB" C_LABEL "   Avail " C_VALUE "%.2f GB" C_RESET,
         st->ram_total_gb, st->ram_avail_gb);
     put(row + 3, col + 2, C_LABEL "Free  " C_VALUE "%.2f GB" C_RESET, st->ram_free_gb);
-    return 5;
+
+    /* Swap (this includes zram when it is used as swap) */
+    if (st->swap_total_gb > 0.0f) {
+        swap_pct = st->swap_used_gb / st->swap_total_gb * 100.0f;
+        put(row + 4, col + 2, C_LABEL "Swap " C_RESET);
+        bar(row + 4, col + 7, bw, swap_pct);
+        put(row + 4, col + 7 + bw + 1, "%s%5.1f%%" C_RESET, pct_col(swap_pct), swap_pct);
+    } else {
+        put(row + 4, col + 2, C_LABEL "Swap  none" C_RESET);
+    }
+    return 6;
 }
 
 static int panel_net(const struct SystemStatus *st, int row, int col, int w) {
@@ -374,7 +394,11 @@ static int panel_net(const struct SystemStatus *st, int row, int col, int w) {
         put(row + 1, col + 2, C_LABEL "(no interfaces)" C_RESET);
     }
     for (i = 0; i < st->num_ifaces; i++) {
-        rate_row(row + 1 + i, col + 2, iw, st->ifaces[i].name,
+        /* a dot before the name: green = link up, red = down, hollow = unknown */
+        if (st->ifaces[i].link == 1) put(row + 1 + i, col + 2, C_GOOD "\xe2\x97\x8f" C_RESET);
+        else if (st->ifaces[i].link == 0) put(row + 1 + i, col + 2, C_BAD "\xe2\x97\x8f" C_RESET);
+        else put(row + 1 + i, col + 2, C_LABEL "\xe2\x97\x8b" C_RESET);
+        rate_row(row + 1 + i, col + 4, iw - 2, st->ifaces[i].name,
                  "\xe2\x96\xbc", C_DOWN, st->ifaces[i].rx_rate,    /* down triangle */
                  "\xe2\x96\xb2", C_UP, st->ifaces[i].tx_rate);     /* up triangle   */
     }
@@ -382,7 +406,7 @@ static int panel_net(const struct SystemStatus *st, int row, int col, int w) {
 }
 
 static int panel_disks(const struct SystemStatus *st, int row, int col, int w) {
-    int iw, h, i, r, bw;
+    int iw, h, i, r, bw, used_w, any_temp;
     char used_s[16], total_s[16], size[40];
 
     iw = w - 4;
@@ -406,10 +430,18 @@ static int panel_disks(const struct SystemStatus *st, int row, int col, int w) {
             pct_col(st->disks[i].used_pct), st->disks[i].used_pct, size);
         r++;
     }
+    any_temp = 0;
     for (i = 0; i < st->num_diskio; i++) {
-        rate_row(r, col + 2, iw, st->diskio[i].name,
-                 "R", C_READ, st->diskio[i].read_rate,
-                 "W", C_WRITE, st->diskio[i].write_rate);
+        if (st->diskio[i].temp >= 0) any_temp = 1;
+    }
+    for (i = 0; i < st->num_diskio; i++) {
+        /* leave 5 columns free for the temperature if any drive has one, so the rows stay aligned */
+        used_w = rate_row(r, col + 2, any_temp ? iw - 5 : iw, st->diskio[i].name,
+                          "R", C_READ, st->diskio[i].read_rate,
+                          "W", C_WRITE, st->diskio[i].write_rate);
+        if (st->diskio[i].temp >= 0) {
+            put(r, col + 2 + used_w, "%s %3dC" C_RESET, temp_col(st->diskio[i].temp), st->diskio[i].temp);
+        }
         r++;
     }
     return h;
@@ -994,9 +1026,9 @@ static void draw_footer(const struct UiState *ui) {
 
 void draw_dashboard(const struct SystemStatus *st, struct UiState *ui,
                     const struct ProcList *pl) {
-    int row, row_l, row_r, lw, rw, len, i, threads;
+    int row, row_l, row_r, lw, rw, len, i, threads, loadlen, left_w;
     int days, hours, minutes, seconds;
-    char up[32], right[80];
+    char up[32], right[80], loadtxt[40];
     const struct ProcInfo *list;
 
     get_term_size();
@@ -1032,8 +1064,15 @@ void draw_dashboard(const struct SystemStatus *st, struct UiState *ui,
         put(1, 9, C_LABEL "arch linux live dashboard" C_RESET);
     }
     len = sprintf(right, "up %s   procs %d   threads %d", up, pl->count, threads);
-    put(1, g_cols - len + 1, C_LABEL "up " C_VALUE "%s" C_LABEL "   procs " C_VALUE "%d"
+    loadlen = sprintf(loadtxt, "   load %.2f %.2f %.2f", st->load[0], st->load[1], st->load[2]);
+    left_w = (ui->paused || g_cols >= 80) ? 34 : 7;       /* room taken by the title on the left */
+    if (g_cols < len + loadlen + left_w) loadlen = 0;     /* the load averages only show if they fit */
+    put(1, g_cols - len - loadlen + 1, C_LABEL "up " C_VALUE "%s" C_LABEL "   procs " C_VALUE "%d"
         C_LABEL "   threads " C_VALUE "%d" C_RESET, up, pl->count, threads);
+    if (loadlen > 0) {
+        put(1, g_cols - loadlen + 1, C_LABEL "   load " C_VALUE "%.2f %.2f %.2f" C_RESET,
+            st->load[0], st->load[1], st->load[2]);
+    }
 
     /* Layout: two columns on a wide terminal, one stacked column otherwise.
        Whatever room is left underneath goes to the process table. */

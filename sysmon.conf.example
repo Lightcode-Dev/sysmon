@@ -19,3 +19,10 @@ sort = cpu
 
 # Sort direction: desc (biggest first) or asc.
 sort_order = desc
+
+# Network interfaces to hide, separated by commas. A * at the end matches any ending,
+# so veth* hides every container interface. Names are matched ignoring case.
+hide_interfaces = veth*
+
+# on: also hide interfaces whose link is down (an unplugged cable, Wi-Fi turned off).
+hide_down = off

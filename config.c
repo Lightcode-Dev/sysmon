@@ -27,6 +27,8 @@ void config_defaults(struct Config *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     strcpy(cfg->theme, "default");
     cfg->mouse = 1;
+    strcpy(cfg->hide_ifaces, "veth*");   /* container plumbing: rarely interesting */
+    cfg->hide_down = 0;
     cfg->tree = 0;
     cfg->sort_key = SORT_CPU;
     cfg->sort_desc = 1;
@@ -35,7 +37,7 @@ void config_defaults(struct Config *cfg) {
 /* Remember only the first problem: one message is enough to point the user at the file */
 static void warn(struct Config *cfg, int line, const char *what, const char *detail) {
     if (cfg->warning[0] == '\0') {
-        snprintf(cfg->warning, sizeof(cfg->warning), "config line %d: %s '%s'", line, what, detail);
+        snprintf(cfg->warning, sizeof(cfg->warning), "config line %d: %.38s '%.30s'", line, what, detail);
     }
 }
 
@@ -113,6 +115,12 @@ void config_load(struct Config *cfg) {
         } else if (!strcmp(key, "sort")) {
             k = parse_sort(val);
             if (k < 0) warn(cfg, n, "unknown sort column", val); else cfg->sort_key = k;
+        } else if (!strcmp(key, "hide_interfaces")) {
+            if (strlen(val) < sizeof(cfg->hide_ifaces)) strcpy(cfg->hide_ifaces, val);
+            else warn(cfg, n, "hide_interfaces list too long:", val);
+        } else if (!strcmp(key, "hide_down")) {
+            b = parse_bool(val);
+            if (b < 0) warn(cfg, n, "hide_down must be on or off, not", val); else cfg->hide_down = b;
         } else if (!strcmp(key, "sort_order")) {
             if (!strcmp(val, "desc")) cfg->sort_desc = 1;
             else if (!strcmp(val, "asc")) cfg->sort_desc = 0;

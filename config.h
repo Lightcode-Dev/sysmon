@@ -25,6 +25,8 @@ struct Config {
     int tree;            /* 1 = start in tree view */
     int sort_key;        /* one of SORT_* from proc.h */
     int sort_desc;       /* 1 = biggest first */
+    char hide_ifaces[128];   /* comma-separated interface patterns to hide, e.g. "veth*, docker0" */
+    int hide_down;           /* 1 = also hide interfaces whose link is down */
     char warning[96];    /* first problem found in the file, or "" */
 };
 

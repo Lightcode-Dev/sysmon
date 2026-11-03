@@ -32,11 +32,33 @@
    from a signal handler. 'volatile' stops the compiler caching it in a
    register, and 'static' keeps it private to this file. */
 static volatile sig_atomic_t keep_running = 1;
+static volatile sig_atomic_t got_winch = 0;   /* the window was resized */
+static volatile sig_atomic_t got_tstp = 0;    /* Ctrl+Z: the user wants to suspend us */
+static volatile sig_atomic_t got_cont = 0;    /* we were resumed */
 
 static void handle_signal(int sig) {
     (void)sig;              /* unused; the cast silences -Wextra */
     keep_running = 0;
 }
+
+/* Install a signal handler that stays installed.
+   Plain signal() is avoided on purpose: under strict ANSI builds glibc gives it the old
+   System V behaviour, where the handler resets to the default after the FIRST signal, so
+   a second resize or a second Ctrl+Z would no longer be noticed. sigaction() has no such
+   surprise. No SA_RESTART flag: we want select() to return as soon as a signal arrives. */
+static void install_handler(int sig, void (*fn)(int)) {
+    struct sigaction sa;
+
+    sa.sa_handler = fn;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(sig, &sa, NULL);
+}
+
+/* Signal handlers only set a flag; the main loop does the real work. */
+static void handle_winch(int sig) { (void)sig; got_winch = 1; }
+static void handle_tstp(int sig)  { (void)sig; got_tstp = 1; }
+static void handle_cont(int sig)  { (void)sig; got_cont = 1; }
 
 /* The process list holds about 2 MB, so it lives in static storage, not on the stack */
 static struct ProcList procs;
@@ -69,6 +91,24 @@ static void enter_raw_mode(void) {
 
 static void leave_raw_mode(void) {
     if (term_saved) tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_term);
+}
+
+static int mouse_on = 0;
+
+/* Put the terminal into our mode: alternate screen, hidden cursor, mouse reporting,
+   single-key input. terminal_stop() undoes all of it. Both are safe to repeat. */
+static void terminal_start(void) {
+    printf("\033[?1049h\033[?25l");
+    if (mouse_on) printf("\033[?1000h\033[?1006h");
+    fflush(stdout);
+    enter_raw_mode();
+}
+
+static void terminal_stop(void) {
+    if (mouse_on) printf("\033[?1006l\033[?1000l");
+    printf("\033[?25h\033[?1049l");
+    fflush(stdout);
+    leave_raw_mode();
 }
 
 /* Bytes read but not yet decoded. A key or mouse sequence can be split between two
@@ -181,8 +221,11 @@ int main(void) {
     long next, remain;
     int flags, stdin_open;
 
-    signal(SIGINT, handle_signal);   /* Ctrl+C */
-    signal(SIGTERM, handle_signal);  /* plain 'kill' */
+    install_handler(SIGINT, handle_signal);   /* Ctrl+C */
+    install_handler(SIGTERM, handle_signal);  /* plain 'kill' */
+    install_handler(SIGWINCH, handle_winch);  /* window resized */
+    install_handler(SIGTSTP, handle_tstp);    /* Ctrl+Z */
+    install_handler(SIGCONT, handle_cont);    /* resumed after being stopped */
 
     /* Zero every field so nothing is ever garbage, even if a read fails */
     memset(&current_status, 0, sizeof(current_status));
@@ -197,6 +240,7 @@ int main(void) {
     ui.tree = cfg.tree;
     ui.sort_key = cfg.sort_key;
     ui.sort_desc = cfg.sort_desc;
+    net_filter_set(cfg.hide_ifaces, cfg.hide_down);
     if (cfg.warning[0] != '\0') {
         snprintf(ui.msg, sizeof(ui.msg), "%s", cfg.warning);   /* shown in the footer until a key is pressed */
     }
@@ -216,10 +260,8 @@ int main(void) {
        your shell history is untouched on exit. \033[?25l hides the cursor.
        \033[?1000h asks the terminal to report mouse clicks and the wheel, and
        \033[?1006h makes it use the SGR format, which has no coordinate limit. */
-    printf("\033[?1049h\033[?25l");
-    if (cfg.mouse) printf("\033[?1000h\033[?1006h");
-    fflush(stdout);
-    enter_raw_mode();
+    mouse_on = cfg.mouse;
+    terminal_start();
     stdin_open = 1;
 
     next = now_ms();
@@ -236,8 +278,30 @@ int main(void) {
            arrives or the time runs out, so keys feel instant. */
         next += SAMPLE_INTERVAL_SEC * 1000L;
         while (keep_running) {
+            if (got_tstp) {
+                /* Ctrl+Z: give the terminal back in a normal state, then really stop. */
+                got_tstp = 0;
+                terminal_stop();
+                install_handler(SIGTSTP, SIG_DFL);   /* so the next SIGTSTP stops us instead of calling our handler */
+                raise(SIGTSTP);             /* we sleep here until the shell resumes us */
+                install_handler(SIGTSTP, handle_tstp);
+                terminal_start();
+                got_cont = 0;
+                next = now_ms();            /* take a fresh sample right away */
+                break;
+            }
+            if (got_cont) {                 /* resumed by someone else's SIGSTOP/SIGCONT */
+                got_cont = 0;
+                terminal_start();
+                draw_dashboard(&current_status, &ui, &procs);
+            }
+            if (got_winch) {                /* resized: redraw now instead of at the next sample */
+                got_winch = 0;
+                draw_dashboard(&current_status, &ui, &procs);
+            }
             remain = next - now_ms();
             if (remain <= 0) break;
+            if (remain > 200) remain = 200; /* wake up often enough to notice the flags above */
             tv.tv_sec = remain / 1000;
             tv.tv_usec = (remain % 1000) * 1000;
             FD_ZERO(&rfds);
@@ -257,9 +321,7 @@ int main(void) {
     }
 
     /* Turn the mouse reporting off, restore the keyboard, cursor and normal screen */
-    if (cfg.mouse) printf("\033[?1006l\033[?1000l");
-    leave_raw_mode();
-    printf("\033[?25h\033[?1049l");
+    terminal_stop();
     printf("Shutting down system monitor gracefully...\n");
     return 0;
 }

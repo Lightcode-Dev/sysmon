@@ -28,6 +28,7 @@ struct NetIface {
     char name[16];             /* e.g. "eth0" (the kernel's limit is 15 chars + '\0') */
     unsigned long prev_rx;     /* byte counters from the previous sample */
     unsigned long prev_tx;
+    int link;                  /* 1 = link up, 0 = down, -1 = unknown (loopback, some virtual devices) */
     float rx_rate;             /* download, bytes per second */
     float tx_rate;             /* upload, bytes per second */
     int seen;                  /* set each tick; interfaces that vanish get dropped */
@@ -45,6 +46,7 @@ struct DiskIO {
     char name[32];             /* e.g. "nvme0n1" or "sda" */
     unsigned long prev_read;   /* sector counters from the previous sample */
     unsigned long prev_write;
+    int temp;                  /* drive temperature in C (NVMe only), or -1 */
     float read_rate;           /* bytes per second */
     float write_rate;
     int seen;
@@ -62,6 +64,8 @@ struct SystemStatus {
     int num_cores;                          /* how many cores were read this tick */
     int core_cpu[MAX_CORES];                /* the kernel's CPU number of each slot (cpu0, cpu1, ...) */
     float core_usage_pct[MAX_CORES];        /* usage of each core */
+    int core_mhz[MAX_CORES];                /* current clock of each CPU in MHz, or 0 if unknown */
+    int core_freq_valid;                    /* 1 if at least one clock was read */
     int core_temp[MAX_CORES];               /* temperature of each core's physical core in C, or -1 */
     int core_temps_valid;                   /* 1 if at least one per-core temperature was read */
     unsigned long core_prev_idle[MAX_CORES];   /* previous sample, per core */
@@ -80,9 +84,17 @@ struct SystemStatus {
     float ram_total_gb;
     float ram_free_gb;
     float ram_avail_gb;
+    float swap_total_gb;       /* swap includes zram when it is used as swap */
+    float swap_used_gb;
+    float load[3];             /* load averages over 1, 5 and 15 minutes */
     int total_processes;
     char status_message[100];
 };
+
+/* Choose which network interfaces to hide. patterns is a comma-separated list; a trailing * matches
+   any ending ("veth*"), matching ignores case. With hide_down set, interfaces whose link is down
+   are hidden too. Call before the first get_system_status. */
+void net_filter_set(const char *patterns, int hide_down);
 
 void get_system_status(struct SystemStatus *status);
 
