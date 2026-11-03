@@ -209,7 +209,7 @@ int main(void) {
        so without this the first frame would show averages since boot. */
     get_system_status(&current_status);
     proc_update(&procs, current_status.num_cores, current_status.cpu_total_ticks,
-                current_status.ram_total_gb);
+                current_status.ram_total_gb, current_status.dt);
     sleep(SAMPLE_INTERVAL_SEC);
 
     /* \033[?1049h switches to the alternate screen (like vim or htop do), so
@@ -224,10 +224,12 @@ int main(void) {
 
     next = now_ms();
     while (keep_running) {
-        get_system_status(&current_status);
-        proc_update(&procs, current_status.num_cores, current_status.cpu_total_ticks,
-                    current_status.ram_total_gb);
-        proc_build_view(&procs, ui.sort_key, ui.sort_desc, ui.tree, ui.filter);
+        if (!ui.paused) {                /* paused: keep the last sample on screen */
+            get_system_status(&current_status);
+            proc_update(&procs, current_status.num_cores, current_status.cpu_total_ticks,
+                        current_status.ram_total_gb, current_status.dt);
+            proc_build_view(&procs, ui.sort_key, ui.sort_desc, ui.tree, ui.filter);
+        }
         draw_dashboard(&current_status, &ui, &procs);
 
         /* Wait until the next sample is due. select() sleeps until a key

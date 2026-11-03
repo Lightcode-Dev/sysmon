@@ -52,7 +52,7 @@ to a two-column layout that leaves more room).
 | Key                    | Action                                              |
 |------------------------|-----------------------------------------------------|
 | `j` / `k`, arrows      | move the selection                                  |
-| PgUp / PgDn, `g` / `G` | page, jump to top or bottom                         |
+| PgUp / PgDn, `g` / `G` | page, jump to top (`g` also un-picks the process) or bottom |
 | `c` `m` `p` `u` `n` `o` | sort by CPU, memory, PID, user, name, disk I/O (again = flip) |
 | Left / Right           | cycle the sort column                               |
 | `r`                    | reverse the order                                   |
@@ -61,6 +61,7 @@ to a two-column layout that leaves more room).
 | `/`                    | filter by command, user or PID (Enter keeps, Esc clears) |
 | `Enter` or `i`         | details popup for the selected process              |
 | `x`                    | send a signal: `t` = SIGTERM, `k` = SIGKILL, other key cancels |
+| `z`                    | pause or resume updates (look around without the list moving) |
 | `T`                    | cycle the color theme                               |
 | `q`                    | quit (closes the popup first if it is open)         |
 
@@ -68,8 +69,10 @@ Mouse: click a row to select it, click the selected row again for details, click
 column header to sort by it, scroll the wheel to move. A click anywhere closes the
 popup. While mouse support is on, most terminals need Shift held to select text.
 
-The selection follows a process by PID, so it stays on the same process while the list
-re-sorts. Changing the sort or filter jumps back to the top. A folded branch shows
+Until you pick something, the highlight simply sits on the first row and the list moves under
+it. Once you move it (`j`/`k`, arrows or a click) it follows that process by PID and stays on the
+same screen row while the list re-sorts around it. `g` or Home returns to the top. Changing the
+sort or filter also jumps back to the top. A folded branch shows
 `[+N]`, the number of processes it hides; folding is ignored while a filter is active.
 
 ## Configuration
@@ -101,7 +104,7 @@ the selected row is shown in reverse video.
   siblings show the same value. AMD's `k10temp` has no per-core sensors, so only the
   package temperature is shown.
 - **Network and disk rates**: byte counters from `/proc/net/dev` and `/proc/diskstats`,
-  differenced once per second. Loopback, loop and ram devices are skipped.
+  differenced between samples and divided by the real elapsed time. Loopback, loop and ram devices are skipped.
 - **Memory "used"**: total minus `MemAvailable`, like `free` and btop.
 
 ## Source layout
@@ -120,8 +123,6 @@ Limits: 64 CPUs, 8 network interfaces, 8 mounted filesystems, 8 disks, 4096 proc
 ## Known limitations
 
 - Linux only.
-- Rates assume one-second samples (`SAMPLE_INTERVAL_SEC`), so they can be off by a percent
-  or so when the machine is busy.
 - Per-core temperatures need the `coretemp` driver; without it the column is hidden.
 - If `/proc` is mounted with `hidepid`, only your own processes are visible.
 

@@ -61,6 +61,10 @@ struct UiState {
     int tbl_rows;          /* data rows that fit (0 = table not shown) */
     int sel_pid;           /* the highlighted process: tracked by pid so it stays put as the list re-sorts */
     int sel_idx;           /* its last known row, used if that process exits */
+    int tracking;          /* 0 = highlight just sits on the first row; 1 = you picked a process and it is followed */
+    int anchor_ok;         /* anchor_row is valid */
+    int anchor_row;        /* screen row of the picked process last frame; kept fixed while the list re-sorts */
+    int paused;            /* 1 = stop collecting new samples */
     int scroll;            /* first visible row of the process table */
     int page_rows;         /* rows the table showed last frame (for Page Up/Down) */
     int kill_pid;

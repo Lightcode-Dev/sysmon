@@ -18,6 +18,7 @@
 #define _POSIX_C_SOURCE 200809L   /* must come before any #include: enables statvfs/snprintf/access under -ansi */
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/statvfs.h>
 #include "sysmon.h"
@@ -207,9 +208,9 @@ static void read_disk_io(struct SystemStatus *status) {
             status->num_diskio++;
         } else {
             status->diskio[i].read_rate = (rd >= status->diskio[i].prev_read)
-                ? (float)(rd - status->diskio[i].prev_read) * 512.0f / SAMPLE_INTERVAL_SEC : 0.0f;
+                ? (float)(rd - status->diskio[i].prev_read) * 512.0f / status->dt : 0.0f;
             status->diskio[i].write_rate = (wr >= status->diskio[i].prev_write)
-                ? (float)(wr - status->diskio[i].prev_write) * 512.0f / SAMPLE_INTERVAL_SEC : 0.0f;
+                ? (float)(wr - status->diskio[i].prev_write) * 512.0f / status->dt : 0.0f;
         }
         status->diskio[i].prev_read = rd;
         status->diskio[i].prev_write = wr;
@@ -300,6 +301,26 @@ static void read_core_temps(struct SystemStatus *status) {
     }
 }
 
+/* Seconds since the last call. Counters are divided by this, so rates stay right
+   even if a frame took longer than planned or sampling was paused. */
+static void measure_interval(struct SystemStatus *status) {
+    static struct timespec prev;
+    static int have_prev = 0;
+    struct timespec now;
+    double dt;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (have_prev) {
+        dt = (double)(now.tv_sec - prev.tv_sec) + (double)(now.tv_nsec - prev.tv_nsec) / 1e9;
+    } else {
+        dt = SAMPLE_INTERVAL_SEC;          /* first call: nothing to compare with yet */
+    }
+    if (dt < 0.05) dt = 0.05;              /* never divide by (almost) zero */
+    prev = now;
+    have_prev = 1;
+    status->dt = (float)dt;
+}
+
 void get_system_status(struct SystemStatus *status) {
     FILE *temp_file, *uptime_file, *mem_file, *load_file, *stat_file, *net_file;
     const char *temp_path;
@@ -314,6 +335,8 @@ void get_system_status(struct SystemStatus *status) {
     char *p, *colon;
     unsigned long rx, tx;
     int len, i, j;
+
+        measure_interval(status);
 
     /* 1. CPU Usage: the "cpu " line is the overall total, then one
           "cpuN" line per core. They are all at the top of /proc/stat. */
@@ -445,9 +468,9 @@ void get_system_status(struct SystemStatus *status) {
                 } else {
                     /* A counter that went down means the interface was reset: use 0 */
                     status->ifaces[i].rx_rate = (rx >= status->ifaces[i].prev_rx)
-                        ? (float)(rx - status->ifaces[i].prev_rx) / SAMPLE_INTERVAL_SEC : 0.0f;
+                        ? (float)(rx - status->ifaces[i].prev_rx) / status->dt : 0.0f;
                     status->ifaces[i].tx_rate = (tx >= status->ifaces[i].prev_tx)
-                        ? (float)(tx - status->ifaces[i].prev_tx) / SAMPLE_INTERVAL_SEC : 0.0f;
+                        ? (float)(tx - status->ifaces[i].prev_tx) / status->dt : 0.0f;
                 }
                 status->ifaces[i].prev_rx = rx;
                 status->ifaces[i].prev_tx = tx;

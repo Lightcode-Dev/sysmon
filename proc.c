@@ -203,7 +203,8 @@ static int cmp_pid(const void *a, const void *b) {
     return (x->pid > y->pid) - (x->pid < y->pid);
 }
 
-void proc_update(struct ProcList *pl, int num_cores, unsigned long total_ticks, float ram_total_gb) {
+void proc_update(struct ProcList *pl, int num_cores, unsigned long total_ticks, float ram_total_gb,
+                 float dt) {
     DIR *d;
     struct dirent *e;
     struct ProcInfo *old, *cur;
@@ -249,10 +250,10 @@ void proc_update(struct ProcList *pl, int num_cores, unsigned long total_ticks, 
             }
             if (cur[i].io_ok && old[j].io_ok) {
                 if (cur[i].io_read >= old[j].io_read) {
-                    cur[i].io_read_rate = (float)(cur[i].io_read - old[j].io_read) / SAMPLE_INTERVAL_SEC;
+                    cur[i].io_read_rate = (float)(cur[i].io_read - old[j].io_read) / dt;
                 }
                 if (cur[i].io_write >= old[j].io_write) {
-                    cur[i].io_write_rate = (float)(cur[i].io_write - old[j].io_write) / SAMPLE_INTERVAL_SEC;
+                    cur[i].io_write_rate = (float)(cur[i].io_write - old[j].io_write) / dt;
                 }
                 cur[i].io_rate = cur[i].io_read_rate + cur[i].io_write_rate;
             }

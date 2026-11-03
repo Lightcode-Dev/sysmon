@@ -56,6 +56,7 @@ struct SystemStatus {
     unsigned long prev_idle;
     unsigned long prev_total;
     float cpu_usage_pct;       /* overall CPU usage */
+    float dt;                  /* real seconds since the previous sample; every rate is divided by this */
     unsigned long cpu_total_ticks;   /* all CPU time since boot, summed over every core (for per-process %) */
 
     int num_cores;                          /* how many cores were read this tick */

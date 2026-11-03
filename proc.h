@@ -67,7 +67,8 @@ struct ProcList {
 };
 
 /* Re-read /proc and work out each process's CPU% since the last call */
-void proc_update(struct ProcList *pl, int num_cores, unsigned long total_ticks, float ram_total_gb);
+void proc_update(struct ProcList *pl, int num_cores, unsigned long total_ticks, float ram_total_gb,
+                 float dt);
 
 /* Rebuild pl->view from the latest sample. An empty filter shows everything.
    With tree set, children are listed under their parent (siblings in sort order). */

@@ -532,20 +532,30 @@ static void panel_procs(struct UiState *ui, const struct ProcList *pl,
     ui->tbl_x0 = col + 2;
     ui->tbl_rows = vis;
 
-    if (ui->jump_top && count > 0) {
-        /* The order just changed (sort or filter): start again from the first row */
-        ui->sel_pid = pl->view[0]->pid;
-        ui->sel_idx = 0;
+    if (ui->jump_top) {
+        /* The order just changed (sort or filter): start again from the top */
+        ui->tracking = 0;
+        ui->anchor_ok = 0;
         ui->scroll = 0;
     }
     ui->jump_top = 0;
 
-    /* Find the selected process by pid. If it exited, stay on the same row. */
-    sel = proc_find_in_view(pl, ui->sel_pid);
-    if (sel < 0) {
-        sel = ui->sel_idx;
-        if (sel >= count) sel = count - 1;
-        if (sel < 0) sel = 0;
+    if (!ui->tracking) {
+        /* Nothing picked yet. The highlight stays on the first row and the list moves under it,
+           so the top of the list is always what you see. */
+        sel = 0;
+        ui->scroll = 0;
+    } else {
+        /* A process is picked: find it by pid. If it exited, stay on the same row. */
+        sel = proc_find_in_view(pl, ui->sel_pid);
+        if (sel < 0) {
+            sel = ui->sel_idx;
+            if (sel >= count) sel = count - 1;
+            if (sel < 0) sel = 0;
+        }
+        /* Keep it on the same SCREEN row as last frame: the highlight holds still and the
+           other rows move around it, so your eyes never have to go looking for it. */
+        if (ui->anchor_ok) ui->scroll = sel - ui->anchor_row;
     }
     if (count > 0) {
         ui->sel_pid = pl->view[sel]->pid;
@@ -559,6 +569,10 @@ static void panel_procs(struct UiState *ui, const struct ProcList *pl,
     if (max_scroll < 0) max_scroll = 0;
     if (ui->scroll > max_scroll) ui->scroll = max_scroll;
     if (ui->scroll < 0) ui->scroll = 0;
+    if (ui->tracking && !ui->anchor_ok) {  /* just picked: remember its screen row; later frames hold it there */
+        ui->anchor_row = sel - ui->scroll;
+        ui->anchor_ok = 1;
+    }
 
     if (ui->filter[0] != '\0') {
         snprintf(right, sizeof(right), "%d of %d  sort %s %s%s  filter: %s", count, pl->count,
@@ -750,6 +764,8 @@ static void select_row(struct UiState *ui, const struct ProcList *pl, int idx) {
     if (idx >= pl->view_count) idx = pl->view_count - 1;
     ui->sel_pid = pl->view[idx]->pid;
     ui->sel_idx = idx;
+    ui->tracking = 1;                  /* from now on follow this process */
+    ui->anchor_ok = 0;                 /* and take its screen row as the new anchor */
 }
 
 static void send_signal(struct UiState *ui, int sig, const char *sig_name) {
@@ -824,7 +840,7 @@ int ui_handle_key(struct UiState *ui, struct ProcList *pl, int key) {
     }
 
     /* --- normal mode --- */
-    cur = proc_find_in_view(pl, ui->sel_pid);
+    cur = ui->tracking ? proc_find_in_view(pl, ui->sel_pid) : 0;
     if (cur < 0) cur = ui->sel_idx;
     page = ui->page_rows > 1 ? ui->page_rows - 1 : 1;
 
@@ -835,7 +851,10 @@ int ui_handle_key(struct UiState *ui, struct ProcList *pl, int key) {
     case UIKEY_DOWN: case 'j': select_row(ui, pl, cur + 1); break;
     case UIKEY_PGUP:           select_row(ui, pl, cur - page); break;
     case UIKEY_PGDN:           select_row(ui, pl, cur + page); break;
-    case UIKEY_HOME: case 'g': select_row(ui, pl, 0); break;
+    case UIKEY_HOME: case 'g':
+        select_row(ui, pl, 0);
+        ui->tracking = 0;                   /* back to the untouched top-of-list highlight */
+        break;
     case UIKEY_END:  case 'G': select_row(ui, pl, pl->view_count - 1); break;
     case UIKEY_RIGHT:
         set_sort(ui, (ui->sort_key + 1) % NUM_SORT_KEYS);
@@ -851,6 +870,9 @@ int ui_handle_key(struct UiState *ui, struct ProcList *pl, int key) {
     case 'u': set_sort(ui, SORT_USER); flags |= UI_RESORT; break;
     case 'n': set_sort(ui, SORT_NAME); flags |= UI_RESORT; break;
     case 'o': set_sort(ui, SORT_IO);   flags |= UI_RESORT; break;
+    case 'z':
+        ui->paused = !ui->paused;           /* main stops collecting while this is set */
+        break;
     case 'T':
         ui->theme_idx = (ui->theme_idx + 1) % NUM_THEMES;
         apply_theme(ui->theme_idx);
@@ -919,7 +941,7 @@ int ui_handle_mouse(struct UiState *ui, struct ProcList *pl, int button, int x, 
     if (ui->mode != UI_MODE_NORMAL) return 0;      /* typing a filter or choosing a signal: ignore */
 
     ui->msg[0] = '\0';
-    cur = proc_find_in_view(pl, ui->sel_pid);
+    cur = ui->tracking ? proc_find_in_view(pl, ui->sel_pid) : 0;
     if (cur < 0) cur = ui->sel_idx;
 
     if (button == 64) { select_row(ui, pl, cur - 3); return flags; }     /* wheel up */
@@ -966,7 +988,7 @@ static void draw_footer(const struct UiState *ui) {
         put(g_rows, 1, C_WARN "%.*s" C_RESET, g_cols - 1, ui->msg);
     } else {
         put(g_rows, 1, C_LABEL "%.*s" C_RESET, g_cols - 1,
-            "q quit  j/k move  Enter details  c m p u n o sort  r reverse  t tree  Space fold  / filter  x kill  T theme");
+            "q quit  j/k move  Enter details  c m p u n o sort  r reverse  t tree  Space fold  / filter  x kill  z pause  T theme");
     }
 }
 
@@ -1004,7 +1026,9 @@ void draw_dashboard(const struct SystemStatus *st, struct UiState *ui,
     for (i = 0; i < pl->count; i++) threads += list[i].threads;
 
     put(1, 1, C_TITLE "sysmon" C_RESET);
-    if (g_cols >= 80) {
+    if (ui->paused) {
+        put(1, 9, C_WARN "PAUSED" C_LABEL "  press z to resume" C_RESET);
+    } else if (g_cols >= 80) {
         put(1, 9, C_LABEL "arch linux live dashboard" C_RESET);
     }
     len = sprintf(right, "up %s   procs %d   threads %d", up, pl->count, threads);
